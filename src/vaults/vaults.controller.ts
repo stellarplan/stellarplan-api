@@ -21,6 +21,6 @@ export class VaultsController {
 
   @Post('break')
   breakVault(@CurrentUser() user: CurrentUserData, @Body() dto: BreakVaultDto) {
-    return this.vaults.breakVault(user.id, dto.vaultId);
+    return this.vaults.breakVault(user.id, dto.vaultId, dto.password);
   }
 }

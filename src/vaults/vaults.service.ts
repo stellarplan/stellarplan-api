@@ -36,8 +36,19 @@ export class VaultsService {
     return vault;
   }
 
-  /** Break a vault early (per PRD: confirm + wallet signature + friction countdown). */
-  async breakVault(userId: string, vaultId: string) {
+  /**
+   * Break a vault early. Per the PRD this must carry intentional friction:
+   * the caller re-authenticates (password, standing in for a wallet signature
+   * in this MVP), the frontend runs a countdown, then this executes.
+   */
+  async breakVault(userId: string, vaultId: string, password: string) {
+    // re-auth check
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const bcrypt = await import('bcryptjs');
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) throw new ForbiddenException('Re-authentication failed — wrong password');
+
     const vault = await this.getForUser(userId, vaultId);
     if (vault.status !== VaultStatus.LOCKED) {
       throw new BadRequestException(`Vault is already ${vault.status.toLowerCase()}`);
@@ -57,18 +68,18 @@ export class VaultsService {
       this.prisma.transaction.create({
         data: {
           userId,
-          wallet: vault.userId,
+          wallet: user.walletAddress ?? '',
           amount: vault.amount,
           type: 'EARLY_WITHDRAWAL',
-          description: `Early withdrawal from ${vault.category} vault`,
+          description: `Early withdrawal from ${vault.name} plan`,
           txHash,
         },
       }),
       this.prisma.notification.create({
         data: {
           userId,
-          title: `${vault.category} plan unlocked early`,
-          message: `You withdrew ${Number(vault.amount).toFixed(7)} ${vault.category} from your plan. This may affect your ability to pay this bill on time.`,
+          title: `${vault.name} plan withdrawn early`,
+          message: `You withdrew ${Number(vault.amount).toFixed(7)} from your ${vault.name} plan early. This may affect your ability to pay this bill on time.`,
         },
       }),
     ]);
@@ -88,9 +99,7 @@ export class VaultsService {
       include: { user: { select: { walletAddress: true } } },
     });
 
-    if (due.length === 0) return;
-
-    this.logger.log(`Found ${due.length} vault(s) due for auto-unlock`);
+    if (due.length > 0) this.logger.log(`Found ${due.length} vault(s) due for auto-unlock`);
 
     for (const vault of due) {
       try {
@@ -106,21 +115,41 @@ export class VaultsService {
               wallet: vault.user.walletAddress ?? '',
               amount: vault.amount,
               type: 'RELEASE',
-              description: `${vault.category} plan unlocked`,
+              description: `${vault.name} plan unlocked`,
               txHash,
             },
           }),
           this.prisma.notification.create({
             data: {
               userId: vault.userId,
-              title: `${vault.category} plan unlocked`,
-              message: `Your ${vault.category} funds of ${Number(vault.amount).toFixed(7)} are now available.`,
+              title: `${vault.name} plan unlocked`,
+              message: `Your ${vault.name} funds of ${Number(vault.amount).toFixed(7)} are now available.`,
             },
           }),
         ]);
       } catch (err) {
         this.logger.error(`Failed to auto-unlock vault ${vault.id}: ${err.message}`, err.stack);
       }
+    }
+
+    // heads-up notifications for vaults unlocking tomorrow (PRD § notifications)
+    const tomorrowStart = new Date(now); tomorrowStart.setUTCDate(now.getUTCDate() + 1);
+    tomorrowStart.setUTCHours(0, 0, 0, 0);
+    const tomorrowEnd = new Date(tomorrowStart); tomorrowEnd.setUTCDate(tomorrowStart.getUTCDate() + 1);
+    const soon = await this.prisma.vault.findMany({
+      where: {
+        status: VaultStatus.LOCKED,
+        unlockDate: { gte: tomorrowStart, lt: tomorrowEnd },
+      },
+    });
+    for (const v of soon) {
+      await this.prisma.notification.create({
+        data: {
+          userId: v.userId,
+          title: `${v.name} plan unlocks tomorrow`,
+          message: `Your ${v.name} plan (${Number(v.amount).toFixed(7)}) will become available tomorrow.`,
+        },
+      });
     }
   }
 
