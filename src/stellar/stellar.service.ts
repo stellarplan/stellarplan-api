@@ -26,6 +26,8 @@ export class StellarService {
   private readonly horizonUrl: string;
   private readonly networkPassphrase: string;
   private readonly secretKey?: string;
+  private readonly defaultContractId?: string;
+  private readonly usdcTokenContract?: string;
   private readonly processedTxHashes = new Set<string>();
 
   constructor(
@@ -36,10 +38,32 @@ export class StellarService {
     this.networkPassphrase =
       config.get<string>('STELLAR_NETWORK_PASSPHRASE') ?? 'Test SDF Network ; September 2015';
     this.secretKey = config.get<string>('STELLAR_SECRET_KEY') || undefined;
+    this.defaultContractId = config.get<string>('VAULT_CONTRACT_ID') || undefined;
+    this.usdcTokenContract = config.get<string>('USDC_TOKEN_CONTRACT') || undefined;
   }
 
   isConfigured() {
-    return !!this.secretKey;
+    return !!this.secretKey && !!(this.defaultContractId || this.usdcTokenContract);
+  }
+
+  /** Query Horizon for live account balances (USDC & native XLM). */
+  async getAccountBalances(walletAddress: string): Promise<{ usdc: number; xlm: number; total: number }> {
+    try {
+      const url = `${this.horizonUrl}/accounts/${walletAddress}`;
+      const res = await fetch(url);
+      if (!res.ok) return { usdc: 0, xlm: 0, total: 0 };
+      const json = await res.json();
+      let usdc = 0;
+      let xlm = 0;
+      for (const b of json.balances ?? []) {
+        if (b.asset_type === 'native') xlm = parseFloat(b.balance || '0');
+        else if (b.asset_code === 'USDC') usdc = parseFloat(b.balance || '0');
+      }
+      return { usdc, xlm, total: usdc + xlm };
+    } catch (err: any) {
+      this.logger.warn(`Failed to fetch Horizon balance for ${walletAddress}: ${err.message}`);
+      return { usdc: 0, xlm: 0, total: 0 };
+    }
   }
 
   /** Fetch incoming (credit) payments for a wallet from Horizon, newest first. */
@@ -90,10 +114,6 @@ export class StellarService {
   /**
    * Create a plan inside the user's vault contract (`create_plan`).
    * Returns the on-chain plan id + submission hash.
-   *
-   * MVP note: when the user's wallet hasn't had a vault contract deployed yet,
-   * or STELLAR_SECRET_KEY is missing, we return a deterministic placeholder so
-   * the rest of the pipeline proceeds off-chain.
    */
   async createPlanOnChain(
     userId: string,
@@ -103,7 +123,8 @@ export class StellarService {
     unlockDate: Date | null,
   ): Promise<{ contractPlanId: number; txHash: string }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.vaultContractId || !this.secretKey) {
+    const targetContractId = user?.vaultContractId ?? this.defaultContractId;
+    if (!targetContractId || !this.secretKey) {
       return {
         contractPlanId: 0,
         txHash: `sim_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`,
@@ -113,46 +134,46 @@ export class StellarService {
     const planTypeNum = planType === 'BILL' ? 0 : planType === 'EMERGENCY' ? 1 : 2;
     const unlockTs = planType === 'BILL' && unlockDate ? Math.floor(unlockDate.getTime() / 1000) : 0;
 
-    return this.invokeContract(user.vaultContractId, 'create_plan', [
+    const res = await this.invokeContract(targetContractId, 'create_plan', [
       name,
       { i128: toStroops(amount) },
       { u32: planTypeNum },
       { u64: unlockTs },
-    ]).then((txHash) => ({
-      // Soroban returns the new plan id as the invocation result; parsing that
-      // requires decoding the return value XDR. For MVP the DB row is the
-      // source of truth, so we track it with a monotonically increasing count.
-      contractPlanId: Date.now() % 1_000_000,
-      txHash,
-    }));
+    ]);
+
+    return {
+      contractPlanId: res.resultValue ?? (Date.now() % 1_000_000),
+      txHash: res.txHash,
+    };
   }
 
   /** Release (or early-break) a plan inside the user's vault contract. */
   async releaseVault(userId: string, vaultId: string, early: boolean): Promise<string> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.vaultContractId || !this.secretKey) {
+    const targetContractId = user?.vaultContractId ?? this.defaultContractId;
+    if (!targetContractId || !this.secretKey) {
       return `sim_release_${Date.now().toString(16)}`;
     }
     const vault = await this.prisma.vault.findUnique({ where: { id: vaultId } });
     if (!vault) return `sim_missing_vault`;
 
     const fn = early ? 'confirm_early_withdraw' : 'release_plan';
-    return this.invokeContract(user.vaultContractId, fn, [{ u32: vault.contractPlanId }]);
+    const res = await this.invokeContract(targetContractId, fn, [{ u32: vault.contractPlanId }]);
+    return res.txHash;
   }
 
   /**
-   * Minimal Soroban invocation via RPC. Uses the raw JSON-RPC endpoint so we
-   * don't need the heavier ContractClient machinery for three simple calls.
+   * Minimal Soroban invocation via RPC. Uses raw RPC endpoint and polls for tx completion.
    */
   private async invokeContract(
     contractId: string,
     method: string,
     args: unknown[],
-  ): Promise<string> {
+  ): Promise<{ txHash: string; resultValue?: number }> {
     const rpcUrl = this.config.get<string>('SOROBAN_RPC_URL') ?? 'https://soroban-testnet.stellar.org';
 
     // Build a fresh keypair from the service account secret.
-    const { Keypair, Horizon, TransactionBuilder, Networks, BASE_FEE, Contract, nativeToScVal, scValToNative, rpc } =
+    const { Keypair, TransactionBuilder, Networks, BASE_FEE, Contract, nativeToScVal, scValToNative, rpc } =
       await import('@stellar/stellar-sdk');
     const kp = Keypair.fromSecret(this.secretKey!);
     const server = new rpc.Server(rpcUrl);
@@ -173,7 +194,7 @@ export class StellarService {
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: this.networkPassphrase,
     })
       .addOperation(contract.call(method, ...scArgs))
       .setTimeout(30)
@@ -184,7 +205,29 @@ export class StellarService {
     const sent = await server.sendTransaction(prepared);
 
     if (sent.status === 'ERROR') throw new Error(`Soroban tx failed: ${JSON.stringify(sent)}`);
-    return sent.hash;
+
+    // Poll transaction status for result value
+    let status = sent.status;
+    let attempts = 0;
+    let txResponse: any = null;
+    while (attempts < 10 && status === 'PENDING') {
+      await new Promise((r) => setTimeout(r, 1000));
+      txResponse = await server.getTransaction(sent.hash);
+      status = txResponse.status;
+      attempts++;
+    }
+
+    let parsedResult: number | undefined = undefined;
+    if (txResponse && txResponse.status === 'SUCCESS' && txResponse.returnValue) {
+      try {
+        const val = scValToNative(txResponse.returnValue);
+        if (typeof val === 'number') parsedResult = val;
+      } catch (e) {
+        this.logger.debug(`Could not parse returnValue: ${e}`);
+      }
+    }
+
+    return { txHash: sent.hash, resultValue: parsedResult };
   }
 }
 

@@ -17,4 +17,9 @@ export class UsersController {
   dashboard(@CurrentUser() user: CurrentUserData) {
     return this.users.dashboard(user.id);
   }
+
+  @Get('balance')
+  balance(@CurrentUser() user: CurrentUserData) {
+    return this.users.getWalletBalance(user.id);
+  }
 }
