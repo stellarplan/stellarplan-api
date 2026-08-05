@@ -5,7 +5,8 @@
 ```bash
 npm install
 cp .env.example .env
-npx prisma migrate dev
+npm run prisma:generate
+npm run prisma:migrate:dev
 npm run start:dev
 ```
 
@@ -27,6 +28,12 @@ npm run start:dev
 
 ## Domain rules worth knowing
 
+- Authentication is **wallet-only**. There is no email/password path — a user is
+  authenticated by signing a challenge (SEP-53) with Freighter. Never reintroduce
+  a password field or a way to set `walletAddress` without a verified signature.
 - Vault funds can only ever move **to the vault owner** — never to an arbitrary address.
 - Auto-release is idempotent: running the cron twice must not double-release.
-- The Backend `StellarService` must stay functional when `STELLAR_SECRET_KEY` is unset (off-chain demo mode).
+- On-chain write operations (allocate / release / early-withdraw) are **mandatory**.
+  When `STELLAR_SECRET_KEY` / `VAULT_CONTRACT_ID` are unset they must throw
+  `ServiceUnavailableException` — never fabricate on-chain state. Only read-only
+  Horizon queries may degrade to empty.

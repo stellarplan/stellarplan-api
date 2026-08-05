@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma.service';
 
@@ -16,9 +16,12 @@ export interface IncomingPayment {
  *  - Soroban: invoke the per-user PlanVault contract (create / release /
  *    early-withdraw) via a backend service account.
  *
- * Everything degrades gracefully when STELLAR_SECRET_KEY / VAULT_CONTRACT_ID
- * are not configured — the API stays fully functional off-chain so the
- * frontend can be developed against it immediately.
+ * Read-only Horizon queries (balances, incoming payments) degrade gracefully to
+ * empty results when the network is unreachable. On-chain WRITE operations
+ * (create_plan / release / early-withdraw) are mandatory: they throw
+ * ServiceUnavailableException when STELLAR_SECRET_KEY / VAULT_CONTRACT_ID are
+ * not configured rather than fabricating a fake transaction — money must never
+ * appear locked in the DB without a real on-chain movement.
  */
 @Injectable()
 export class StellarService {
@@ -114,6 +117,9 @@ export class StellarService {
   /**
    * Create a plan inside the user's vault contract (`create_plan`).
    * Returns the on-chain plan id + submission hash.
+   *
+   * REQUIRES on-chain configuration (STELLAR_SECRET_KEY + vault contract). Throws
+   * ServiceUnavailableException rather than fabricating a fake hash if unconfigured.
    */
   async createPlanOnChain(
     userId: string,
@@ -125,10 +131,10 @@ export class StellarService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const targetContractId = user?.vaultContractId ?? this.defaultContractId;
     if (!targetContractId || !this.secretKey) {
-      return {
-        contractPlanId: 0,
-        txHash: `sim_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`,
-      };
+      throw new ServiceUnavailableException(
+        'On-chain vault operations require STELLAR_SECRET_KEY and a deployed contract. ' +
+        'Set these environment variables or contact support.',
+      );
     }
 
     const planTypeNum = planType === 'BILL' ? 0 : planType === 'EMERGENCY' ? 1 : 2;
@@ -142,7 +148,7 @@ export class StellarService {
     ]);
 
     return {
-      contractPlanId: res.resultValue ?? (Date.now() % 1_000_000),
+      contractPlanId: res.resultValue ?? 0,
       txHash: res.txHash,
     };
   }
@@ -152,10 +158,14 @@ export class StellarService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const targetContractId = user?.vaultContractId ?? this.defaultContractId;
     if (!targetContractId || !this.secretKey) {
-      return `sim_release_${Date.now().toString(16)}`;
+      throw new ServiceUnavailableException(
+        'On-chain vault operations require STELLAR_SECRET_KEY and a deployed contract.',
+      );
     }
     const vault = await this.prisma.vault.findUnique({ where: { id: vaultId } });
-    if (!vault) return `sim_missing_vault`;
+    if (!vault) {
+      throw new ServiceUnavailableException(`Vault ${vaultId} not found`);
+    }
 
     const fn = early ? 'confirm_early_withdraw' : 'release_plan';
     const res = await this.invokeContract(targetContractId, fn, [{ u32: vault.contractPlanId }]);

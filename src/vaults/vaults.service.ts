@@ -8,6 +8,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
+import { ChallengeService } from '../common/challenge.service';
+import { challengeMessage } from '../auth/auth.service';
+import { verifyStellarSignature } from '../common/signature';
 import { VaultStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
@@ -18,6 +21,7 @@ export class VaultsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly challenges: ChallengeService,
   ) {}
 
   async listForUser(userId: string) {
@@ -37,22 +41,52 @@ export class VaultsService {
   }
 
   /**
-   * Break a vault early. Per the PRD this must carry intentional friction:
-   * the caller re-authenticates (password, standing in for a wallet signature
-   * in this MVP), the frontend runs a countdown, then this executes.
+   * Step 1 of an early break: issue a nonce the user's wallet must sign. This
+   * is the intentional friction the PRD requires, implemented as a real wallet
+   * signature rather than a password.
    */
-  async breakVault(userId: string, vaultId: string, password: string) {
-    // re-auth check
+  async createBreakChallenge(userId: string, vaultId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found');
-    const bcrypt = await import('bcryptjs');
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new ForbiddenException('Re-authentication failed — wrong password');
+    if (!user?.walletAddress) throw new BadRequestException('No wallet connected');
+    const vault = await this.getForUser(userId, vaultId);
+    if (vault.status !== VaultStatus.LOCKED) {
+      throw new BadRequestException(`Vault is already ${vault.status.toLowerCase()}`);
+    }
+    const nonce = this.challenges.issue(`break:${userId}:${vaultId}`);
+    const message = challengeMessage(
+      user.walletAddress,
+      nonce,
+      'Break plan early',
+      `${vault.name} · ${Number(vault.amount).toFixed(7)}`,
+    );
+    return { message, nonce };
+  }
+
+  /**
+   * Step 2 of an early break: verify the wallet signature over the challenge,
+   * then execute the on-chain early withdrawal.
+   */
+  async breakVault(userId: string, vaultId: string, nonce: string, signature: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.walletAddress) throw new BadRequestException('No wallet connected');
+
+    if (!this.challenges.consume(`break:${userId}:${vaultId}`, nonce)) {
+      throw new ForbiddenException('Break challenge invalid or expired — start again');
+    }
 
     const vault = await this.getForUser(userId, vaultId);
     if (vault.status !== VaultStatus.LOCKED) {
       throw new BadRequestException(`Vault is already ${vault.status.toLowerCase()}`);
     }
+
+    const message = challengeMessage(
+      user.walletAddress,
+      nonce,
+      'Break plan early',
+      `${vault.name} · ${Number(vault.amount).toFixed(7)}`,
+    );
+    const ok = await verifyStellarSignature(user.walletAddress, message, signature);
+    if (!ok) throw new ForbiddenException('Signature verification failed');
 
     const txHash = await this.stellar.releaseVault(userId, vaultId, true);
 
@@ -164,6 +198,6 @@ export class VaultsService {
       where: { userId, status: VaultStatus.LOCKED },
       _sum: { amount: true },
     });
-    return result._sum.amount ?? 0;
+    return Number(result._sum.amount ?? 0);
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
 import { VaultsService } from '../vaults/vaults.service';
@@ -22,13 +22,20 @@ export class AllocationsService {
    *    also creates the plan on-chain.
    */
   async detectAndAllocate(userId: string, walletOverride?: string) {
-    const walletAddress = walletOverride ?? (await this.resolveWallet(userId));
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const walletAddress = walletOverride ?? user.walletAddress;
     if (!walletAddress) throw new NotFoundException('No wallet connected');
+    if (!user.vaultContractId) {
+      throw new ServiceUnavailableException(
+        'No vault contract deployed for this wallet yet. Deploy your vault before allocating.',
+      );
+    }
 
     const payments = await this.stellar.getIncomingPayments(walletAddress);
     if (payments.length === 0) {
       this.logger.log(`No new payments for wallet ${walletAddress}`);
-      return { allocated: 0, vaults: [], skipped: 0 };
+      return { allocated: 0, vaults: [], skipped: 0, paymentsProcessed: 0 };
     }
 
     const plans = await this.prisma.budgetPlan.findMany({
@@ -36,7 +43,7 @@ export class AllocationsService {
     });
     if (plans.length === 0) {
       this.logger.log(`No active plans for user ${userId}`);
-      return { allocated: 0, vaults: [], skipped: payments.length };
+      return { allocated: 0, vaults: [], skipped: payments.length, paymentsProcessed: 0 };
     }
 
     const totalPlanned = plans.reduce((acc, p) => acc + Number(p.amount), 0);
@@ -64,33 +71,24 @@ export class AllocationsService {
             ? this.nextUnlockDate(plan.unlockDay)
             : null;
 
-        let contractPlanId: number | null = null;
-        if (await this.userHasVaultContract(userId)) {
-          try {
-            const { contractPlanId: onChainId, txHash } = await this.stellar.createPlanOnChain(
-              userId,
-              plan.name,
-              item.amount,
-              plan.planType,
-              unlockDate,
-            );
-            contractPlanId = onChainId;
-            transactionRecords.push({
-              userId,
-              wallet: walletAddress,
-              amount: item.amount,
-              type: 'ALLOCATION',
-              description: `Allocated to ${plan.category} plan`,
-              txHash,
-            });
-          } catch (err) {
-            this.logger.warn(
-              `On-chain plan creation failed for ${plan.name}: ${err.message}. Skipping DB-only.`,
-            );
-          }
-        } else {
-          // Off-chain only for MVP when no contract deployed yet.
-        }
+        // On-chain plan creation is mandatory — money must actually be locked
+        // in the user's vault contract. A failure aborts this plan's allocation
+        // rather than silently recording an unfunded DB row.
+        const { contractPlanId, txHash } = await this.stellar.createPlanOnChain(
+          userId,
+          plan.name,
+          item.amount,
+          plan.planType,
+          unlockDate,
+        );
+        transactionRecords.push({
+          userId,
+          wallet: walletAddress,
+          amount: item.amount,
+          type: 'ALLOCATION',
+          description: `Allocated to ${plan.category} plan`,
+          txHash,
+        });
 
         vaultRecords.push({
           userId,
@@ -101,8 +99,8 @@ export class AllocationsService {
           status: VaultStatus.LOCKED,
           unlockDate,
           planType: plan.planType,
-          contractId: (await this.prisma.user.findUnique({ where: { id: userId } }))?.vaultContractId ?? '',
-          contractPlanId: contractPlanId ?? 0,
+          contractId: user.vaultContractId,
+          contractPlanId,
         });
       }
 
@@ -161,14 +159,6 @@ export class AllocationsService {
   // Internals
   // ------------------------------------------------------------------
 
-  private async resolveWallet(userId: string): Promise<string | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { walletAddress: true },
-    });
-    return user?.walletAddress ?? null;
-  }
-
   private allocate(
     salary: number,
     plans: Array<{ id: string; category: string; amount: any; planType: any; unlockDay: number | null }>,
@@ -190,25 +180,31 @@ export class AllocationsService {
     return allocations;
   }
 
+  /**
+   * The next occurrence of `unlockDay` (1–28) as a UTC date. If this month's day
+   * has already passed (or is today), roll to next month. Day is clamped to the
+   * number of days in the target month.
+   */
   private nextUnlockDate(unlockDay: number): Date {
     const now = new Date();
-    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
-    next.setUTCDate(Math.min(unlockDay, this.daysInMonth(next.getUTCMonth() + 1, next.getUTCFullYear())));
-    if (next <= now) {
-      next.setUTCMonth(next.getUTCMonth() + 1);
+    let year = now.getUTCFullYear();
+    let month = now.getUTCMonth(); // 0-based
+    const clamp = (y: number, m: number) => Math.min(unlockDay, this.daysInMonth(m, y));
+
+    let candidate = new Date(Date.UTC(year, month, clamp(year, month)));
+    if (candidate <= now) {
+      month += 1;
+      if (month > 11) {
+        month = 0;
+        year += 1;
+      }
+      candidate = new Date(Date.UTC(year, month, clamp(year, month)));
     }
-    return next;
+    return candidate;
   }
 
+  /** Days in a 0-based month. */
   private daysInMonth(month: number, year: number) {
-    return new Date(Date.UTC(year, month, 0)).getUTCDate();
-  }
-
-  private async userHasVaultContract(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { vaultContractId: true },
-    });
-    return !!user?.vaultContractId;
+    return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   }
 }

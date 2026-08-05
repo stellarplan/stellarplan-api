@@ -1,0 +1,6 @@
+# CODEOWNERS — every change requires review from a core maintainer.
+# Works together with branch protection (see user_task.md) to enforce the
+# "external contributors open PRs, only maintainers merge" workflow.
+#
+# Replace @stellarplan/core with the actual team slug once the org team exists.
+* @stellarplan/core

@@ -1,10 +1,19 @@
 import { IsString } from 'class-validator';
 
+export class BreakVaultChallengeDto {
+  @IsString()
+  vaultId: string;
+}
+
 export class BreakVaultDto {
   @IsString()
   vaultId: string;
 
-  /** Re-authentication per PRD §6 ("re-authenticate to unlock early"). */
+  /** Nonce issued by POST /vaults/break/challenge. */
   @IsString()
-  password: string;
+  nonce: string;
+
+  /** Base64 ed25519 signature of the challenge message, from the user's wallet. */
+  @IsString()
+  signature: string;
 }

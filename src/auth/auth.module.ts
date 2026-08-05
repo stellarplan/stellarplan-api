@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { requireJwtSecret } from '../common/env';
 
 @Module({
   imports: [
@@ -14,7 +15,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
-        secret: cfg.get<string>('JWT_SECRET') ?? 'stellarplan-dev-secret-change-me',
+        secret: requireJwtSecret(cfg),
         signOptions: { expiresIn: cfg.get<string>('JWT_EXPIRES_IN') ?? '15m' },
       }),
     }),

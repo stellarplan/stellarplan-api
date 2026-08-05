@@ -13,6 +13,7 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { StellarModule } from './stellar/stellar.module';
 import { PrismaModule } from './common/prisma.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PrismaModule } from './common/prisma.module';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     PrismaModule,
+    CommonModule,
     AuthModule,
     UsersModule,
     WalletsModule,

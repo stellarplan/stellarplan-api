@@ -15,7 +15,6 @@ export class UsersService {
       where: { id: userId },
       select: {
         id: true,
-        email: true,
         name: true,
         walletAddress: true,
         vaultContractId: true,

@@ -1,0 +1,47 @@
+name: CI
+
+# Runs on every push and pull request targeting main.
+# The job names below (build, test) are stable identifiers — use them as the
+# "required status checks" when configuring branch protection on main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+      - name: Build
+        run: npm run build
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+      - name: Unit tests
+        run: npm test

@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a defect in the StellarPlan API
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call `POST /api/v1/...`
+        2. With body `{ ... }`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, DB, deployment (local / Render), and whether Stellar is configured.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant server logs. Redact any secrets, tokens, or wallet keys.
+      render: shell
+    validations:
+      required: false

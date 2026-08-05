@@ -3,10 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { assertRequiredEnv } from './common/env';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
+
+  // Fail fast on missing security-critical configuration.
+  assertRequiredEnv(config);
 
   app.use(helmet());
   app.enableCors({

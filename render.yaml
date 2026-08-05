@@ -28,7 +28,9 @@ services:
       - key: SOROBAN_RPC_URL
         value: https://soroban-testnet.stellar.org
       - key: STELLAR_SECRET_KEY
-        sync: false # funded testnet/mainnet keypair that signs vault invocations
+        sync: false # funded testnet/mainnet keypair that signs vault invocations (required for allocations/releases)
+      - key: VAULT_CONTRACT_ID
+        sync: false # fallback PlanVault contract id used when a user has no per-wallet contract
       - key: USDC_TOKEN_CONTRACT
         sync: false # Soroban token contract id for the asset held in vaults
 

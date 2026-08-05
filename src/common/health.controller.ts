@@ -1,9 +1,27 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { PrismaService } from './prisma.service';
 
 @Controller('health')
 export class HealthController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Get()
-  check() {
-    return { status: 'ok', service: 'stellarplan-api', timestamp: new Date().toISOString() };
+  async check() {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+    } catch {
+      throw new ServiceUnavailableException({
+        status: 'error',
+        service: 'stellarplan-api',
+        database: 'unreachable',
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return {
+      status: 'ok',
+      service: 'stellarplan-api',
+      database: 'ok',
+      timestamp: new Date().toISOString(),
+    };
   }
 }
