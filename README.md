@@ -1,6 +1,18 @@
 # StellarPlan API
 
-Backend for the StellarPlan automatic financial planning platform.
+> Backend for StellarPlan — when your salary lands, it automatically moves rent, bills, and savings into time-locked on-chain plans, leaving only what you can safely spend.
+
+<p align="center"><em>Freighter-only auth · Stellar + Soroban · built for the Drips Stellar Wave program (testnet)</em></p>
+
+[![CI](https://github.com/stellarplan/stellarplan-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stellarplan/stellarplan-api/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![NestJS](https://img.shields.io/badge/NestJS-Node.js%20%2B%20TypeScript-E0234E)
+![Stellar](https://img.shields.io/badge/Stellar-testnet-black)
+![Soroban](https://img.shields.io/badge/Soroban-PlanVault-blueviolet)
+
+---
+
+## What it is
 
 - **Framework**: NestJS (Node.js + TypeScript)
 - **Database**: PostgreSQL via Prisma ORM
@@ -35,7 +47,29 @@ also require a fresh signature.
 - Early withdrawal gated by a signed challenge
 - Notifications & activity timeline
 
-## Quick Start
+## Quick start
+
+One command creates `.env`, installs dependencies, generates the Prisma client,
+runs the initial migration, seeds demo data, then builds and tests:
+
+```bash
+./scripts/setup.sh
+```
+
+The only value you must edit by hand is `DATABASE_URL` in `.env` (plus
+`STELLAR_SECRET_KEY` / `VAULT_CONTRACT_ID` / `USDC_TOKEN_CONTRACT` for on-chain
+features at runtime). The script is idempotent — safe to re-run.
+
+Then start the dev server:
+
+```bash
+npm run start:dev
+```
+
+The API is reachable at `http://localhost:4000/api/v1`.
+
+<details>
+<summary>Manual steps (what the script automates)</summary>
 
 ```bash
 # 1. Install
@@ -53,12 +87,31 @@ npm run prisma:migrate:dev   # first run: --name init
 npm run start:dev
 ```
 
-The API is then reachable at `http://localhost:4000/api/v1`.
+</details>
 
 > **On-chain is required for writes.** Salary allocation, release, and early
 > withdrawal call the PlanVault contract. If `STELLAR_SECRET_KEY` /
 > `VAULT_CONTRACT_ID` are unset, those endpoints return `503 Service Unavailable`
 > rather than silently faking state. Read-only Horizon queries degrade to empty.
+
+## Architecture
+
+```
+        ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+ user ─▶│  web         │─────▶│  api         │─────▶│ PostgreSQL   │
+        │  (Next.js)   │      │  (NestJS)    │      │ (Prisma)     │
+        └──────────────┘      └──────┬───────┘      └──────────────┘
+                                     │
+                                     ▼
+                          ┌────────────────────────┐
+                          │ Stellar                │
+                          │ Horizon / Soroban RPC  │──▶ PlanVault contract
+                          └────────────────────────┘
+```
+
+The API owns all business logic: it reads salary activity from Horizon, decides
+allocations, and calls the PlanVault Soroban contract for locks, releases, and
+early withdrawals.
 
 ## Endpoints
 
@@ -96,6 +149,7 @@ See [`.env.example`](./.env.example).
 
 | Command | Purpose |
 |---|---|
+| `./scripts/setup.sh` | One-command setup: env, install, Prisma, migrate, seed, build, test |
 | `npm run start:dev` | Dev server with watch |
 | `npm run build` | Compile to `dist/` |
 | `npm run start:prod` | Production mode |
@@ -120,3 +174,36 @@ src/
 ├── stellar/        # Horizon + Soroban integration
 └── common/         # Prisma client, signature verification, decorators, guards
 ```
+
+## CI
+
+Every push and pull request to `main` runs the [CI workflow](./.github/workflows/ci.yml):
+a `build` job (install → generate Prisma client → `npm run build`) and a `test`
+job (`npm test`). Use `build` and `test` as required status checks for branch
+protection on `main`.
+
+## Related repositories
+
+- [stellarplan-web](https://github.com/stellarplan/stellarplan-web) — Next.js frontend that talks to this API.
+- [stellarplan-contracts](https://github.com/stellarplan/stellarplan-contracts) — the PlanVault Soroban contract this API calls.
+
+## Maintainers
+
+| Name | Contact |
+|---|---|
+| StellarPlan Team | <!-- add Telegram/email --> |
+
+<!-- Maintainer: replace the placeholder above with a real name and a Telegram handle or email. -->
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). `main` is
+protected, so all changes land via pull request with CI green.
+
+**Security:** please report vulnerabilities privately per [SECURITY.md](./SECURITY.md).
+
+**License:** [MIT](./LICENSE).
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=stellarplan/stellarplan-api)](https://github.com/stellarplan/stellarplan-api/graphs/contributors)
