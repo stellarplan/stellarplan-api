@@ -4,7 +4,7 @@ services:
   - type: web
     name: stellarplan-api
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npx prisma generate && npm run build
     startCommand: npx prisma migrate deploy && node dist/main.js
     healthCheckPath: /api/v1/health
@@ -37,4 +37,4 @@ services:
 databases:
   - name: stellarplan-db
     databaseName: stellarplan
-    plan: starter
+    plan: free
