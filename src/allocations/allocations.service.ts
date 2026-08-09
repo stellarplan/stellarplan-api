@@ -26,9 +26,15 @@ export class AllocationsService {
     if (!user) throw new NotFoundException('User not found');
     const walletAddress = walletOverride ?? user.walletAddress;
     if (!walletAddress) throw new NotFoundException('No wallet connected');
-    if (!user.vaultContractId) {
+
+    // Which vault contract this user's plans lock into: their own per-user
+    // contract if they deployed one, otherwise the shared testnet vault
+    // (VAULT_CONTRACT_ID). Only unavailable when the server has no contract at
+    // all configured — a deploy/config problem, never something the user fixes.
+    const contractId = this.stellar.contractIdFor(user.vaultContractId);
+    if (!contractId) {
       throw new ServiceUnavailableException(
-        'No vault contract deployed for this wallet yet. Deploy your vault before allocating.',
+        'Vault contract is not configured on the server yet. Please try again shortly.',
       );
     }
 
@@ -99,7 +105,7 @@ export class AllocationsService {
           status: VaultStatus.LOCKED,
           unlockDate,
           planType: plan.planType,
-          contractId: user.vaultContractId,
+          contractId,
           contractPlanId,
         });
       }

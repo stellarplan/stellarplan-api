@@ -49,6 +49,17 @@ export class StellarService {
     return !!this.secretKey && !!(this.defaultContractId || this.usdcTokenContract);
   }
 
+  /**
+   * Resolve which vault contract a user's on-chain operations target: their own
+   * per-user contract if they have deployed one, otherwise the shared default
+   * (`VAULT_CONTRACT_ID`). Returns undefined only when neither is configured.
+   * Mirrors the fallback used by createPlanOnChain / releaseVault so that a user
+   * without a personal vault still allocates into the shared testnet contract.
+   */
+  contractIdFor(userVaultContractId?: string | null): string | undefined {
+    return userVaultContractId ?? this.defaultContractId;
+  }
+
   /** Query Horizon for live account balances (USDC & native XLM). */
   async getAccountBalances(walletAddress: string): Promise<{ usdc: number; xlm: number; total: number }> {
     try {
