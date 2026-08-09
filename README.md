@@ -2,6 +2,8 @@
 
 > Backend for StellarPlan — when your salary lands, it automatically moves rent, bills, and savings into time-locked on-chain plans, leaving only what you can safely spend.
 
+[📚 Documentation](https://stellarplan.gitbook.io/stellarplan-docs/)
+
 <p align="center"><em>Freighter-only auth · Stellar + Soroban · built for the Drips Stellar Wave program (testnet)</em></p>
 
 [![CI](https://github.com/stellarplan/stellarplan-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stellarplan/stellarplan-api/actions/workflows/ci.yml)
