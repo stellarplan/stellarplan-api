@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHash } from 'crypto';
@@ -32,6 +32,7 @@ export function challengeMessage(walletAddress: string, nonce: string, action = 
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -54,12 +55,25 @@ export class AuthService {
   async verifyWallet(dto: WalletVerifyDto) {
     const walletAddress = dto.walletAddress.trim();
     if (!this.challenges.consume(`login:${walletAddress}`, dto.nonce)) {
+      this.logger.warn(`Challenge consume failed for wallet ${walletAddress.slice(0, 8)}…`);
       throw new UnauthorizedException('Challenge invalid or expired — request a new one');
     }
 
     const message = challengeMessage(walletAddress, dto.nonce);
-    const ok = await verifyStellarSignature(walletAddress, message, dto.signature);
-    if (!ok) throw new UnauthorizedException('Signature verification failed');
+    const result = verifyStellarSignature(walletAddress, message, dto.signature);
+
+    if (!result.valid) {
+      this.logger.warn(
+        `Signature verification failed for ${walletAddress.slice(0, 8)}… | ` +
+        `strategy=${result.strategy} sigLen=${result.diagnostics.signatureLength} ` +
+        `msgLen=${result.diagnostics.messageLength} ` +
+        `sep53Hash=${result.diagnostics.sep53PayloadHash.slice(0, 16)}… ` +
+        `rawHash=${result.diagnostics.rawMessageHash.slice(0, 16)}…`,
+      );
+      throw new UnauthorizedException('Signature verification failed');
+    }
+
+    this.logger.log(`Wallet ${walletAddress.slice(0, 8)}… verified via ${result.strategy}`);
 
     let user = await this.prisma.user.findUnique({ where: { walletAddress } });
     if (!user) {

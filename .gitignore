@@ -5,3 +5,7 @@ dist/
 !.env.example
 coverage/
 *.log
+
+# Local auth-flow scratch output (see scripts/test-auth-flow.js)
+auth.json
+challenge.txt

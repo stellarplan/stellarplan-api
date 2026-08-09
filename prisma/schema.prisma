@@ -8,20 +8,20 @@ datasource db {
 }
 
 model User {
-  id                 String            @id @default(uuid())
-  name               String
-  walletAddress      String            @unique
-  vaultContractId    String?           @unique
-  vaultWasmHash      String?
-  vaultSalt          String?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  budgetPlans        BudgetPlan[]
-  vaults             Vault[]
-  transactions       Transaction[]
-  notifications      Notification[]
-  refreshTokens      RefreshToken[]
-  wallets            WalletConnection[]
+  id              String            @id @default(uuid())
+  name            String
+  walletAddress   String            @unique
+  vaultContractId String?           @unique
+  vaultWasmHash   String?
+  vaultSalt       String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  budgetPlans     BudgetPlan[]
+  notifications   Notification[]
+  refreshTokens   RefreshToken[]
+  transactions    Transaction[]
+  vaults          Vault[]
+  wallets         WalletConnection?
 }
 
 model RefreshToken {
@@ -31,17 +31,17 @@ model RefreshToken {
   expiresAt DateTime
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
 }
 
 model WalletConnection {
-  id        String   @id @default(uuid())
-  userId    String
+  id        String     @id @default(uuid())
+  userId    String     @unique
   walletId  WalletType
   address   String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@unique([userId])
+  createdAt DateTime   @default(now())
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model BudgetPlan {
@@ -50,7 +50,7 @@ model BudgetPlan {
   category    String
   name        String
   amount      Decimal  @db.Decimal(18, 7)
-  unlockDay   Int?     // 1–28 for Bills
+  unlockDay   Int?
   planType    PlanType @default(BILL)
   description String?
   icon        String?
@@ -64,40 +64,40 @@ model BudgetPlan {
 }
 
 model Vault {
-  id                 String      @id @default(uuid())
-  userId             String
-  budgetPlanId       String?
-  category           String
-  name               String
-  amount             Decimal     @db.Decimal(18, 7)
-  status             VaultStatus @default(LOCKED)
-  unlockDate         DateTime?
-  planType           PlanType    @default(BILL)
-  contractId         String      // contract instance that holds this plan
-  contractPlanId     Int
-  releasedAt         DateTime?
-  earlyWithdrawnAt   DateTime?
-  releaseTxHash      String?
-  breakTxHash        String?
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
-  user               User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  budgetPlan         BudgetPlan? @relation(fields: [budgetPlanId], references: [id], onDelete: SetNull)
+  id               String      @id @default(uuid())
+  userId           String
+  budgetPlanId     String?
+  category         String
+  name             String
+  amount           Decimal     @db.Decimal(18, 7)
+  status           VaultStatus @default(LOCKED)
+  unlockDate       DateTime?
+  planType         PlanType    @default(BILL)
+  contractId       String
+  contractPlanId   Int
+  releasedAt       DateTime?
+  earlyWithdrawnAt DateTime?
+  releaseTxHash    String?
+  breakTxHash      String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  budgetPlan       BudgetPlan? @relation(fields: [budgetPlanId], references: [id])
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
   @@index([unlockDate])
 }
 
 model Transaction {
-  id         String          @id @default(uuid())
-  userId     String
-  wallet     String
-  amount     Decimal         @db.Decimal(18, 7)
-  type       TransactionType
+  id          String          @id @default(uuid())
+  userId      String
+  wallet      String
+  amount      Decimal         @db.Decimal(18, 7)
+  type        TransactionType
   description String?
-  txHash     String?
-  createdAt  DateTime        @default(now())
-  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  txHash      String?
+  createdAt   DateTime        @default(now())
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
 }

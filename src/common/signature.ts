@@ -1,40 +1,83 @@
 import { createHash } from 'crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 
-/** SEP-53 domain-separation prefix that Freighter prepends before signing. */
 const SEP53_PREFIX = 'Stellar Signed Message:\n';
 
 /**
- * Verify an ed25519 signature produced by a Stellar wallet (e.g. Freighter's
- * `signMessage`) against the claimed public key.
+ * Verify a Stellar wallet signature over a challenge message.
  *
- * Freighter follows SEP-53: it signs `SHA256("Stellar Signed Message:\n" + msg)`
- * rather than the raw message bytes. We verify that scheme first, then fall back
- * to a raw-message verification so signatures from tools that sign the plain
- * bytes still work. Returns false on any error so callers can treat a malformed
- * or non-matching signature as an auth failure.
+ * Freighter (and all SEP-53 compliant wallets) sign:
+ *   SHA256("Stellar Signed Message:\n" + messageBytes)
+ *
+ * We attempt SEP-53 verification first, then fall back to verifying the raw
+ * SHA-256 of the message (some wallets hash but omit the prefix) and finally
+ * the raw UTF-8 bytes (in case a wallet signs the message directly).
+ *
+ * Returns an object with the result and which strategy matched, so the caller
+ * can log diagnostics without exposing secrets.
  */
-export async function verifyStellarSignature(
+export interface VerifyResult {
+  valid: boolean;
+  strategy: 'sep53' | 'sha256-raw' | 'raw-bytes' | 'none';
+  diagnostics: {
+    signatureLength: number;
+    messageLength: number;
+    sep53PayloadHash: string;
+    rawMessageHash: string;
+  };
+}
+
+export function verifyStellarSignature(
   walletAddress: string,
   message: string,
   signatureBase64: string,
-): Promise<boolean> {
+): VerifyResult {
+  const messageBytes = Buffer.from(message, 'utf8');
+  const signatureBytes = Buffer.from(signatureBase64, 'base64');
+
+  // Pre-compute hashes for diagnostics
+  const sep53Payload = Buffer.concat([
+    Buffer.from(SEP53_PREFIX, 'utf8'),
+    messageBytes,
+  ]);
+  const sep53Hash = createHash('sha256').update(sep53Payload).digest();
+  const rawMessageHash = createHash('sha256').update(messageBytes).digest();
+
+  const diagnostics = {
+    signatureLength: signatureBytes.length,
+    messageLength: messageBytes.length,
+    sep53PayloadHash: sep53Hash.toString('hex'),
+    rawMessageHash: rawMessageHash.toString('hex'),
+  };
+
+  // Signature must be exactly 64 bytes (Ed25519)
+  if (signatureBytes.length !== 64) {
+    return { valid: false, strategy: 'none', diagnostics };
+  }
+
   try {
-    const { Keypair } = await import('@stellar/stellar-sdk');
-    const kp = Keypair.fromPublicKey(walletAddress);
-    const signature = Buffer.from(signatureBase64, 'base64');
-    if (signature.length === 0) return false;
+    const keypair = Keypair.fromPublicKey(walletAddress);
 
-    // SEP-53: hash the prefixed message, then verify over the 32-byte digest.
-    const sep53Payload = Buffer.concat([
-      Buffer.from(SEP53_PREFIX, 'utf8'),
-      Buffer.from(message, 'utf8'),
-    ]);
-    const sep53Hash = createHash('sha256').update(sep53Payload).digest();
-    if (kp.verify(sep53Hash, signature)) return true;
+    // Strategy 1: SEP-53 — SHA256("Stellar Signed Message:\n" + message)
+    // This is what Freighter and all SEP-53 compliant wallets produce.
+    if (keypair.verify(sep53Hash, signatureBytes)) {
+      return { valid: true, strategy: 'sep53', diagnostics };
+    }
 
-    // Fallback: signature over the raw UTF-8 message bytes.
-    return kp.verify(Buffer.from(message, 'utf8'), signature);
+    // Strategy 2: SHA-256 of raw message (no prefix)
+    // Some wallet implementations may hash the message but skip the prefix.
+    if (keypair.verify(rawMessageHash, signatureBytes)) {
+      return { valid: true, strategy: 'sha256-raw', diagnostics };
+    }
+
+    // Strategy 3: Raw UTF-8 bytes (no hash at all)
+    // Some simple signing implementations sign the message bytes directly.
+    if (keypair.verify(messageBytes, signatureBytes)) {
+      return { valid: true, strategy: 'raw-bytes', diagnostics };
+    }
+
+    return { valid: false, strategy: 'none', diagnostics };
   } catch {
-    return false;
+    return { valid: false, strategy: 'none', diagnostics };
   }
 }
