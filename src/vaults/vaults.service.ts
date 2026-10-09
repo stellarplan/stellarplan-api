@@ -85,8 +85,16 @@ export class VaultsService {
       'Break plan early',
       `${vault.name} · ${Number(vault.amount).toFixed(7)}`,
     );
-    const ok = await verifyStellarSignature(user.walletAddress, message, signature);
-    if (!ok) throw new ForbiddenException('Signature verification failed');
+    // verifyStellarSignature returns a VerifyResult object, not a boolean, so the
+    // outcome must be read from `.valid`. Treating the object itself as the
+    // result would accept every signature.
+    const result = verifyStellarSignature(user.walletAddress, message, signature);
+    if (!result.valid) {
+      this.logger.warn(
+        `Break signature rejected for user ${userId} on vault ${vaultId} (strategy=${result.strategy})`,
+      );
+      throw new ForbiddenException('Signature verification failed');
+    }
 
     const txHash = await this.stellar.releaseVault(userId, vaultId, true);
 

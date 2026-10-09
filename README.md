@@ -117,31 +117,45 @@ early withdrawals.
 
 ## Endpoints
 
-| Method | Route | Description |
-|---|---|---|
-| `POST` | `/api/v1/auth/challenge` | Request a sign-in challenge for a wallet |
-| `POST` | `/api/v1/auth/wallet` | Verify a signed challenge, issue tokens |
-| `POST` | `/api/v1/auth/refresh` | Rotate tokens |
-| `POST` | `/api/v1/auth/logout` | Revoke refresh token |
-| `GET`  | `/api/v1/auth/me` | Current user profile |
-| `GET`  | `/api/v1/users/me` | Current user profile |
-| `GET`  | `/api/v1/users/dashboard` | Full dashboard payload |
-| `GET`  | `/api/v1/users/balance` | Balance summary |
-| `GET`  | `/api/v1/wallet` | Connected wallet status (read-only) |
-| `GET`  | `/api/v1/plans` | List plans |
-| `POST` | `/api/v1/plans` | Create plan |
-| `PUT`  | `/api/v1/plans/:id` | Update plan |
-| `DELETE`| `/api/v1/plans/:id` | Delete plan |
-| `GET`  | `/api/v1/vaults` | List locked vaults |
-| `GET`  | `/api/v1/vaults/:id` | Vault details |
-| `POST` | `/api/v1/vaults/break/challenge` | Request an early-withdrawal challenge |
-| `POST` | `/api/v1/vaults/break` | Early withdrawal (requires signature) |
-| `POST` | `/api/v1/allocations/detect` | Scan wallet & allocate salary on-chain |
-| `GET`  | `/api/v1/allocations/history` | Allocation history |
-| `GET`  | `/api/v1/transactions` | Activity feed |
-| `GET`  | `/api/v1/notifications` | Notifications |
-| `PATCH`| `/api/v1/notifications/:id/read` | Mark single notification read |
-| `PATCH`| `/api/v1/notifications/read-all` | Mark all read |
+All routes are under `/api/v1`. **Auth** says what a request needs: `none`, or a
+`Bearer` access token from the wallet login. **Chain** says whether the call
+reads or writes the Stellar network:
+
+- **off-chain** — touches only the API's own database.
+- **reads Horizon** — reads public ledger data; degrades to empty if Horizon is unreachable.
+- **writes on-chain** — submits a Soroban transaction signed by the service key. Returns `503` if `STELLAR_SECRET_KEY` / `VAULT_CONTRACT_ID` are unset.
+
+| Method | Route | Auth | Chain | Description |
+|---|---|---|---|---|
+| `GET`  | `/health` | none | off-chain | Liveness plus database check; `503` if the database is down |
+| `POST` | `/auth/challenge` | none (10/min) | off-chain | Request a sign-in challenge for a wallet |
+| `POST` | `/auth/wallet` | none (10/min) | off-chain | Verify a signed challenge, issue tokens |
+| `POST` | `/auth/refresh` | none (20/min) | off-chain | Rotate the refresh token and issue a new pair |
+| `POST` | `/auth/logout` | Bearer | off-chain | Revoke all refresh tokens for the user |
+| `GET`  | `/auth/me` | Bearer | off-chain | Current user profile |
+| `GET`  | `/users/me` | Bearer | off-chain | Current user profile |
+| `GET`  | `/users/dashboard` | Bearer | reads Horizon | Full dashboard payload |
+| `GET`  | `/users/balance` | Bearer | reads Horizon | Balance summary |
+| `GET`  | `/wallet` | Bearer | off-chain | Connected wallet status |
+| `GET`  | `/plans` | Bearer | off-chain | List plans |
+| `GET`  | `/plans/:id` | Bearer | off-chain | One plan (own plans only) |
+| `POST` | `/plans` | Bearer | off-chain | Create plan |
+| `PUT`  | `/plans/:id` | Bearer | off-chain | Update plan |
+| `DELETE`| `/plans/:id` | Bearer | off-chain | Delete plan |
+| `GET/POST/PUT/DELETE` | `/budgets`, `/budgets/:id` | Bearer | off-chain | Budget plans (same shape as plans) |
+| `GET`  | `/vaults` | Bearer | off-chain | List locked vaults |
+| `GET`  | `/vaults/:id` | Bearer | off-chain | Vault details (own vaults only) |
+| `POST` | `/vaults/break/challenge` | Bearer (15/min) | off-chain | Request an early-withdrawal challenge |
+| `POST` | `/vaults/break` | Bearer (15/min) | writes on-chain | Early withdrawal; needs the wallet's signature over the challenge |
+| `POST` | `/allocations/detect` | Bearer | reads Horizon, writes on-chain | Scan the wallet and allocate salary into vaults |
+| `GET`  | `/allocations/history` | Bearer | off-chain | Allocation history |
+| `GET`  | `/transactions` | Bearer | off-chain | Activity feed |
+| `GET`  | `/notifications` | Bearer | off-chain | Notifications |
+| `PATCH`| `/notifications/:id/read` | Bearer | off-chain | Mark one notification read |
+| `PATCH`| `/notifications/read-all` | Bearer | off-chain | Mark all read |
+
+A daily job at 06:00 server time releases vaults whose unlock date has arrived
+(**writes on-chain**) and sends "unlocks tomorrow" notifications.
 
 ## Environment variables
 
